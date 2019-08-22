@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# zfs mount -a
+# cannot mount '/z-main': directory is not empty
+
+POOL=z-main
+TEST_VOLUME=Share
+BIND_MOUNT_DIR=/data
+
+# Check if test volume mounted in zpool
+volume_path="/$POOL/$TEST_VOLUME"
+# [[ ! -d "$volume_path" || ! mountpoint "$volume_path" ]]
+if mountpoint -q "$volume_path"; then
+    # Volume found, path is mountpoint, OK
+    exit 0
+fi
+echo "ZPOOL NOT MOUNTED - $volume_path not a mountpoint"
+
+# Mount ZFS
+echo "ATTEMPTING TO MOUNT ZFS..."
+err=$(zfs mount -a 2>&1) rc=$?
+if [[ $rc -eq 0 ]]; then
+    # ZFS mount successful, that's how it should be...
+    echo "ZFS mounted"
+    exit 0
+fi
+
+# For some reason, this always fails (with 0.8 maybe?):
+# cannot mount '/z-main': directory is not empty
+
+# Check if mount failed because "directory is not empty"
+if [[ $err =~ directory\ is\ not\ empty ]]; then # don't bash Bash
+    # Clear ZPOOL mountpoint and try again
+    echo "ZFS complains about its mountpoint not being empty or something"
+    find "/$POOL/" -depth -type d -exec rmdir -v {} \;
+
+    # Give it another shot
+    err=$(zfs mount -a 2>&1) rc=$?
+    if [[ $rc -eq 0 ]]; then
+        echo "ZFS MOUNTED"
+    else
+        echo "It failed again: $err"
+        exit $rc
+    fi
+else
+    # Mount failed for another reason, don't know why
+    echo "ZFS mount failed for some other reason, check and fix manually:"
+    echo "$err"
+    exit $rc
+fi
+
+# Re-mount bind mounts (for NFS)
+if [[ -d "$BIND_MOUNT_DIR" ]]; then
+    echo "Attempting to re-mount bind mounts in $BIND_MOUNT_DIR..."
+    for i in "$BIND_MOUNT_DIR"/*; do
+        # Unmount and then mount again, ignore errors
+        umount "$i"
+        mount "$i"
+    done
+fi
+
